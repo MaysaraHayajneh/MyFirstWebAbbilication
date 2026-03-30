@@ -1,6 +1,6 @@
+using System.Net;
 using System.Text.Json;
 using WebApplication1.Core;
-using HttpMethod = Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http.HttpMethod;
 
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
@@ -8,64 +8,89 @@ var app = builder.Build();
 // THIS IS A MIDDLEWARE COMPONENT  
 app.Run(async (HttpContext context) =>
 {
-    // I AM APPLYING LIKE ROUTING MECHANISM
-    if (string.Equals(context.Request.Method, HttpMethod.Get.ToString(), StringComparison.OrdinalIgnoreCase))
-    {
-        if (context.Request.Path.StartsWithSegments("/")) // I AM APPLYING LIKE ROUTING MECHANISM BY CHECKING WHERE TEH REQUEST GO 
-        // AND INSIDE EACH IF THE LOGIC IS LIKE THE CONTROLLER ACTIONS END POINT (HANDLER)
-        {
-            await context.Response.WriteAsync($"The method is  {context.Request.Method}\n" +
-               $"The Url is  {context.Request.Path} /base :{context.Request.PathBase}\n");
+	var path = context.Request.Path;
+	var method = context.Request.Method;
 
-            foreach (var key in context.Request.Headers.Keys)
-            {
-                await context.Response.WriteAsync($"{key}:{context.Request.Headers[key]}");
-            }
-        }
-        else if (context.Request.Path.StartsWithSegments("/employee"))  // I AM APPLYING LIKE ROUTING MECHANISM BY CHECKING WHERE TEH REQUEST GO 
-        // AND INSIDE EACH IF THE LOGIC IS LIKE THE CONTROLLER ACTIONS END POINT (HANDLER)
-        {
-            var employees = EmployeeRepository.GetEmployees();
-            foreach (var employee in employees)
-            {
-                await context.Response.WriteAsync($"Id: {employee.Id}, Name: {employee.Name}, Position: {employee.Position}, Salary: {employee.Salary}\n");
-            }
-            await context.Response.WriteAsync("List of employee");
-        }
-    }
-    else if (string.Equals(context.Request.Method, HttpMethod.Post.ToString(), StringComparison.OrdinalIgnoreCase))
-    {
-        if (context.Request.Path.StartsWithSegments("/employee"))
-        {
-            Stream bodyStream = context.Request.Body;
+	// ROOT "/"
+	if (path.StartsWithSegments("/"))
+	{
+		if (HttpMethods.IsGet(method))
+		{
+			await context.Response.WriteAsync($"The method is {method}\n" +
+				$"The Url is {path} /base :{context.Request.PathBase}\n");
 
-            using StreamReader reader = new StreamReader(bodyStream);
+			foreach (var key in context.Request.Headers.Keys)
+			{
+				await context.Response.WriteAsync($"{key}:{context.Request.Headers[key]}\n");
+			}
+		}
+	}
 
-            string body = await reader.ReadToEndAsync();
+	// EMPLOYEE "/employee"
+	else if (path.StartsWithSegments("/employee"))
+	{
+		if (HttpMethods.IsGet(method))
+		{
+			var employees = EmployeeRepository.GetEmployees();
 
-            Employee? employee = JsonSerializer.Deserialize<Employee>(body, new JsonSerializerOptions() { PropertyNameCaseInsensitive = true });
+			foreach (var employee in employees)
+			{
+				await context.Response.WriteAsync(
+					$"Id: {employee.Id}, Name: {employee.Name}, Position: {employee.Position}, Salary: {employee.Salary}\n");
+			}
 
-            if (employee is null || employee.Id == default) throw new Exception("Invalid employee data");
+			context.Response.StatusCode = (int)HttpStatusCode.OK;
+		}
+		else if (HttpMethods.IsPost(method))
+		{
+			var employee = await ReadEmployeeFromBody(context);
 
-            EmployeeRepository.AddEmployee(employee);
-        }
-    }
-    else if (string.Equals(context.Request.Method, HttpMethod.Put.ToString(), StringComparison.OrdinalIgnoreCase))
-    {
-        if (context.Request.Path.StartsWithSegments("/employee"))
-        {
-            Stream bodyStream = context.Request.Body;
+			EmployeeRepository.AddEmployee(employee);
+			context.Response.StatusCode = (int)HttpStatusCode.Created;
+			await context.Response.WriteAsync("Employee added");
 
-            using StreamReader reader = new StreamReader(bodyStream);
+		}
+		else if (HttpMethods.IsPut(method))
+		{
+			var employee = await ReadEmployeeFromBody(context);
 
-            string body = await reader.ReadToEndAsync();
+			EmployeeRepository.Uppdate(employee);
+			context.Response.StatusCode = (int)HttpStatusCode.NoContent;
+		}
+		else if (HttpMethods.IsDelete(method))
+		{
+			if (context.Request.Headers["Authorization"] != "maysara")
+			{
+				context.Response.StatusCode = 403;
+				await context.Response.WriteAsync("Forbidden");
+				return;
+			}
 
-            Employee? employee = JsonSerializer.Deserialize<Employee>(body, new JsonSerializerOptions() { PropertyNameCaseInsensitive = true });
+			var idValue = context.Request.Query["id"];
 
-            if (employee is null || employee.Id == default) throw new Exception("Invalid employee data");
+			if (!int.TryParse(idValue, out int id))
+				throw new Exception("Invalid id");
 
-            EmployeeRepository.Uppdate(employee);
-        }
-    }
+			EmployeeRepository.Delete(id);
+			await context.Response.WriteAsync("Employee deleted");
+		}
+	}
 });
+
+#region Helper 
+static async Task<Employee> ReadEmployeeFromBody(HttpContext context)
+{
+	using StreamReader reader = new StreamReader(context.Request.Body);
+	string body = await reader.ReadToEndAsync();
+
+	var employee = JsonSerializer.Deserialize<Employee>(
+		body,
+		new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+	if (employee is null || employee.Id == default)
+		throw new Exception("Invalid employee data");
+
+	return employee;
+}
+#endregion
 app.Run();
